@@ -13,6 +13,7 @@
           root = ./.;
           buildTools = hp: {
             brittany = hp.brittany;
+            cabal-fmt = hp.cabal-fmt;
           };
         };
       };
