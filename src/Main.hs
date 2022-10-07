@@ -14,10 +14,13 @@ import qualified Data.HashMap.Strict           as HM
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as T
 import           GHC.Generics
+import           Lucid
+import           Lucid.Base                     ( makeAttribute )
 import           Network.Wai.Handler.Warp       ( run )
 import           Options.Applicative
 import           Servant
 import           Servant.Auth.Server
+import           Servant.HTML.Lucid
 import           Servant.QueryParamList
 import qualified Steam.Login                   as SteamLogin
 
@@ -28,18 +31,21 @@ import qualified Steam.Login                   as SteamLogin
 --                       JWT cookie + XSRF Cookie.
 type LoginAPI
   =    "login"
-         :> Get '[JSON] ()
+         :> Get '[JSON, HTML] LoginRedirect
   :<|> "login-redirect"
          :> QueryParamList
-         :> Get '[JSON] (Headers '[ Header "Set-Cookie" SetCookie
+         :> Get '[JSON, HTML] (Headers '[ Header "Set-Cookie" SetCookie
                                   , Header "Set-Cookie" SetCookie]
-                                 SteamLogin.SteamInfo)
+                                 DisplaySteamInfo)
 
 -- This sub-API only serves the / route that should display your steam ID if
 -- your JWT-cookie was accepted, or errors out with HTTP status 401 instead
-type ProtectedAPI = Get '[JSON] SteamId
+type ProtectedAPI = Get '[JSON , HTML] SteamId
 
-newtype SteamId = SteamId Text
+data SteamId = SteamId
+  { steamIdNr :: Text
+  , steamNick :: Text
+  }
   deriving (Generic, Show)
 
 instance ToJSON SteamId
@@ -47,9 +53,36 @@ instance ToJWT SteamId
 instance FromJSON SteamId
 instance FromJWT SteamId
 
+instance ToHtml SteamId where
+  toHtmlRaw = toHtml
+  toHtml s = div_ $ do
+    h1_ (toHtml $ steamNick s)
+    p_ (toHtml $ steamIdNr s)
+
+data LoginRedirect
+
+instance ToHtml LoginRedirect where
+  toHtmlRaw = toHtml
+  toHtml _ =
+    h1_ $ toHtml ("You are being redirected to the Steam login page..." :: Text)
+
+instance ToJSON LoginRedirect where
+  toJSON _ = toJSON ()
+
+newtype DisplaySteamInfo = DisplaySteamInfo SteamLogin.SteamInfo
+  deriving (Generic)
+
+instance ToJSON DisplaySteamInfo
+instance ToHtml DisplaySteamInfo where
+  toHtmlRaw = toHtml
+  toHtml (DisplaySteamInfo i) = div_ $ do
+    h1_ $ toHtml $ "Hello " <> SteamLogin.steamName i <> "!"
+    p_ $ img_ [makeAttribute "src" (SteamLogin.steamAvatarFull i)]
+    p_ $ a_ [makeAttribute "href" "/"] "Proceed to logged-in area"
+
 protectedApi :: Servant.Auth.Server.AuthResult SteamId -> Server ProtectedAPI
 protectedApi (Servant.Auth.Server.Authenticated sId) = return sId
-protectedApi x = liftIO (print x) >> throwAll err401
+protectedApi _ = throwAll err401
 
 type API auths
   = (Servant.Auth.Server.Auth auths SteamId :> ProtectedAPI) :<|> LoginAPI
@@ -61,7 +94,7 @@ server baseUrl steamClientKey cs jwts =
 
 --------------------------------------------------------------------------------
 
-indexHandler :: String -> Handler ()
+indexHandler :: String -> Handler LoginRedirect
 indexHandler baseUrl = throwError $ err301
   { errHeaders = [("Location", SteamLogin.steamLoginUrl $ BS.pack baseUrl)]
   }
@@ -76,7 +109,7 @@ loginRedirectHandler
            '[ Header "Set-Cookie" SetCookie
             , Header "Set-Cookie" SetCookie
             ]
-           SteamLogin.SteamInfo
+           DisplaySteamInfo
        )
 loginRedirectHandler cookieSettings jwtSettings steamClientKey queryParams =
   let claimParams = HM.fromList queryParams
@@ -106,13 +139,14 @@ loginRedirectHandler cookieSettings jwtSettings steamClientKey queryParams =
             { errBody = "Can't decode user info response: " <> BSL.pack err
             }
           Right i -> return i
-        mApplyCookies <- liftIO
-          (acceptLogin cookieSettings jwtSettings $ SteamId $ SteamLogin.steamId
-            steamInfo
-          )
+        mApplyCookies <-
+          liftIO $ acceptLogin cookieSettings jwtSettings $ SteamId
+            (SteamLogin.steamId steamInfo)
+            (SteamLogin.steamName steamInfo)
         case mApplyCookies of
-          Nothing           -> throwError err401
-          Just applyCookies -> return $ applyCookies steamInfo
+          Nothing -> throwError err401
+          Just applyCookies ->
+            return $ applyCookies $ DisplaySteamInfo steamInfo
 
 --------------------------------------------------------------------------------
 

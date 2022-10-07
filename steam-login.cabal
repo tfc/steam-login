@@ -23,6 +23,7 @@ executable steam-login
     , http-client
     , http-client-tls
     , http-types
+    , lucid
     , mtl
     , optparse-applicative
     , profunctors

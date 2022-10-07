@@ -52,7 +52,6 @@ steamIdFromClaims m = do
   idUrl  <- mIdUrl
   T.stripPrefix "https://steamcommunity.com/openid/id/" idUrl
 
-
 data SteamInfo = SteamInfo
   { steamId           :: Text
   , steamName         :: Text
