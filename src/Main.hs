@@ -58,8 +58,8 @@ instance FromJWT SteamId
 instance ToHtml SteamId where
   toHtmlRaw = toHtml
   toHtml s = div_ $ do
-    h1_ (toHtml $ steamNick s)
-    p_ (toHtml $ steamIdNr s)
+    h1_ (toHtml $ "Hello " <> steamNick s)
+    p_ (toHtml $ "You are logged in with Steam ID: " <> steamIdNr s)
 
 data LoginRedirect
 
