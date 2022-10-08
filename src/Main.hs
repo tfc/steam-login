@@ -1,8 +1,9 @@
-{-# LANGUAGE FlexibleContexts             #-}
+{-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeOperators         #-}
+{-# LANGUAGE LambdaCase         #-}
 
 module Main where
 
@@ -111,44 +112,35 @@ loginRedirectHandler
             ]
            DisplaySteamInfo
        )
-loginRedirectHandler cookieSettings jwtSettings steamClientKey queryParams =
-  let claimParams = HM.fromList queryParams
-      thr statusCode body = throwError statusCode { errBody = body }
-  in  do
-        verificationResult <- liftIO (SteamLogin.verifyClaim claimParams)
-        case verificationResult of
-          Left (SteamLogin.BadClaimParams err) ->
-            thr err400 $ BSL.fromStrict $ T.encodeUtf8 err
-          Left (SteamLogin.BadSteamServerAnswer status) ->
-            thr err500
-              $  "Got HTTP status "
-              <> BSL.pack (show status)
-              <> " from steam server"
-          Left SteamLogin.BadClaimVerification ->
-            thr err400 "Steam did not accept claim"
-          Left SteamLogin.BadUserInfoResponse ->
-            thr err400 "can't parse user info response"
-          Right _ -> return ()
-        steamId <- case SteamLogin.steamIdFromClaims claimParams of
-          Nothing ->
-            throwError $ err400 { errBody = "Claims don't contain Steam ID" }
-          Just s -> return s
-        mSteamInfo <- liftIO $ SteamLogin.steamInfoFromId steamClientKey steamId
-        steamInfo  <- case mSteamInfo of
-          Left err -> throwError $ err400
-            { errBody = "Can't decode user info response: " <> BSL.pack err
-            }
-          Right i -> return i
-        mApplyCookies <-
-          liftIO $ acceptLogin cookieSettings jwtSettings $ SteamId
-            (SteamLogin.steamId steamInfo)
-            (SteamLogin.steamName steamInfo)
-        case mApplyCookies of
-          Nothing -> throwError err401
-          Just applyCookies ->
-            return $ applyCookies $ DisplaySteamInfo steamInfo
-
---------------------------------------------------------------------------------
+loginRedirectHandler cookieSettings jwtSettings steamClientKey queryParams = do
+  verifyClaims
+  steamId <- maybe (thr err400 "Claims don't contain Steam ID") return
+    $ SteamLogin.steamIdFromClaims claimParamMap
+  steamInfo <-
+    either (thr err400 . ("Can't decode user info response: " <>) . BSL.pack)
+           return
+      =<< liftIO (SteamLogin.steamInfoFromId steamClientKey steamId)
+  let steamIdTokenInput = SteamId (SteamLogin.steamId steamInfo)
+                                  (SteamLogin.steamName steamInfo)
+  returnWithCookies <- maybe (throwError err500) return
+    =<< liftIO (acceptLogin cookieSettings jwtSettings steamIdTokenInput)
+  return $ returnWithCookies $ DisplaySteamInfo steamInfo
+ where
+  claimParamMap = HM.fromList queryParams
+  thr statusCode body = throwError statusCode { errBody = body }
+  verifyClaims = liftIO (SteamLogin.verifyClaim claimParamMap) >>= \case
+    Left (SteamLogin.BadClaimParams err) ->
+      thr err400 $ BSL.fromStrict $ T.encodeUtf8 err
+    Left (SteamLogin.BadSteamServerAnswer status) ->
+      thr err500
+        $  "Got HTTP status "
+        <> BSL.pack (show status)
+        <> " from steam server"
+    Left SteamLogin.BadClaimVerification ->
+      thr err400 "Steam did not accept claim"
+    Left SteamLogin.BadUserInfoResponse ->
+      thr err400 "can't parse user info response"
+    Right _ -> return ()
 
 --------------------------------------------------------------------------------
 
