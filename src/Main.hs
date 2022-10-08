@@ -3,7 +3,7 @@
 {-# LANGUAGE DeriveGeneric         #-}
 {-# LANGUAGE OverloadedStrings     #-}
 {-# LANGUAGE TypeOperators         #-}
-{-# LANGUAGE LambdaCase         #-}
+{-# LANGUAGE LambdaCase            #-}
 
 module Main where
 
@@ -14,6 +14,7 @@ import qualified Data.ByteString.Lazy.Char8    as BSL
 import qualified Data.HashMap.Strict           as HM
 import           Data.Text                      ( Text )
 import qualified Data.Text.Encoding            as T
+import qualified Data.Text.IO                  as T
 import           GHC.Generics
 import           Lucid
 import           Lucid.Base                     ( makeAttribute )
@@ -85,10 +86,13 @@ protectedApi :: Servant.Auth.Server.AuthResult SteamId -> Server ProtectedAPI
 protectedApi (Servant.Auth.Server.Authenticated sId) = return sId
 protectedApi _ = throwAll err401
 
-type API auths
-  = (Servant.Auth.Server.Auth auths SteamId :> ProtectedAPI) :<|> LoginAPI
+type API
+  = (Servant.Auth.Server.Auth '[Cookie , JWT] SteamId :> ProtectedAPI) :<|> LoginAPI
 
-server :: String -> Text -> CookieSettings -> JWTSettings -> Server (API auths)
+api :: Proxy API
+api = Proxy :: Proxy API
+
+server :: String -> Text -> CookieSettings -> JWTSettings -> Server API
 server baseUrl steamClientKey cs jwts =
   protectedApi
     :<|> (indexHandler baseUrl :<|> loginRedirectHandler cs jwts steamClientKey)
@@ -168,31 +172,31 @@ argsParser =
           )
 
 main :: IO ()
-main =
-  let cookieSettings = defaultCookieSettings
-        { cookieXsrfSetting = Just $ defaultXsrfCookieSettings
-        -- the idea behind disabling XSRF for GET routes is that you still need
-        -- to reach the web application with your browser with only the JWT
-        -- cookie. Once some JS-powered application runs, it always needs to
-        -- send XSRF tokens with every request.
-                                { xsrfExcludeGet = True
-                                }
-        }
-  in  do
-        (Config steamClientKey port) <- execParser $ info
-          (argsParser <**> helper)
-          (fullDesc <> progDesc "Minimal Website with Steam Login" <> header
-            "steam-login server"
-          )
-        myKey <- generateKey
-        let jwtCfg = defaultJWTSettings myKey
-            cfg    = cookieSettings :. jwtCfg :. EmptyContext
-            api    = Proxy :: Proxy (API '[Cookie , JWT])
-        run port $ serveWithContext
-          api
-          cfg
-          (server ("http://localhost:" <> show port)
-                  steamClientKey
-                  cookieSettings
-                  jwtCfg
-          )
+main = do
+  (Config steamClientKey port) <- execParser $ info
+    (argsParser <**> helper)
+    (fullDesc <> progDesc "Minimal Website with Steam Login" <> header
+      "steam-login server"
+    )
+  myKey <- generateKey
+  let jwtCfg  = defaultJWTSettings myKey
+      cfg     = cookieSettings :. jwtCfg :. EmptyContext
+      baseUrl = "http://localhost:" <> show port
+
+  putStrLn $ "Serving on " <> baseUrl
+  T.putStrLn $ layoutWithContext api cfg
+
+  run port $ serveWithContext
+    api
+    cfg
+    (server baseUrl steamClientKey cookieSettings jwtCfg)
+ where
+  cookieSettings = defaultCookieSettings
+    { cookieXsrfSetting = Just $ defaultXsrfCookieSettings
+    -- the idea behind disabling XSRF for GET routes is that you still need
+    -- to reach the web application with your browser with only the JWT
+    -- cookie. Once some JS-powered application runs, it always needs to
+    -- send XSRF tokens with every request.
+                            { xsrfExcludeGet = True
+                            }
+    }
