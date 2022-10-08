@@ -10,11 +10,14 @@
       imports = [ inputs.haskell-flake.flakeModule ];
       perSystem = { self', pkgs, ... }: {
         haskellProjects.default = {
+          name = "steam-login";
           root = ./.;
           buildTools = hp: {
             brittany = hp.brittany;
             cabal-fmt = hp.cabal-fmt;
           };
+          hlintCheck.enable = true;
+          hlsCheck.enable = true;
         };
       };
     };
